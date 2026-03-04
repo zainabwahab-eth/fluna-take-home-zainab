@@ -1,0 +1,324 @@
+{
+  "name": "Company mention monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "0fe4c3cf-dee0-4fc7-92a6-dd5d3266e9c1",
+        "options": {
+          "responseData": "{\"message\": \"processing\"}"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -960,
+        208
+      ],
+      "id": "f32b7998-c371-4952-872a-37aa8fe5c2dd",
+      "name": "companyMonitorWebhook",
+      "webhookId": "0fe4c3cf-dee0-4fc7-92a6-dd5d3266e9c1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a helpful research assistant for climate tech news.\\nSearch recent news (last 12 months) about {{ $json.body.companyName }} strictly in the context of cleantech, climate tech, or clean energy investment.\\nExtract only the 5 most important and recent mentions.\\nReturn **ONLY** valid JSON — no explanations, no markdown, no code blocks, no backticks, no extra text before or after the JSON.\\nExact schema:\\n{\\n  \\\"companyName\\\": \\\"{{ $json.body.companyName }}\\\",\\n  \\\"searchDate\\\": \\\"Month YYYY\\\",\\n  \\\"totalMentionsFound\\\": integer,\\n  \\\"mentions\\\": [\\n    {\\n      \\\"headline\\\": string,\\n      \\\"date\\\": \\\"Month YYYY or Month DD, YYYY\\\",\\n      \\\"source\\\": string,\\n      \\\"url\\\": string,\\n      \\\"summary\\\": \\\"1-2 sentence summary\\\",\\n      \\\"sentiment\\\": \\\"positive|negative|neutral\\\",\\n      \\\"relevance\\\": \\\"high|medium|low\\\"\\n    }\\n  ],\\n  \\\"overallSentiment\\\": \\\"positive|negative|neutral\\\",\\n  \\\"keyThemes\\\": [\\\"theme1\\\", \\\"theme2\\\"],\\n  \\\"quality_score\\\": integer 0-100,\\n  \\\"quality_reasoning\\\": string\\n}\\nOutput must be complete, valid, parseable JSON only.\"\n    }]\n  }],\n  \"tools\": [{ \"google_search\": {} }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 8192,\n    \"thinkingConfig\": {\n      \"thinkingBudget\": 0\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -752,
+        208
+      ],
+      "id": "bb983a37-5d48-4580-a245-b74751e33221",
+      "name": "callGeminiApi",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9dc7e6df-54fa-4135-93f6-d81c097f0fea",
+              "leftValue": "={{ !!$json.candidates?.[0]?.content?.parts?.[0]?.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -544,
+        208
+      ],
+      "id": "3c655dd4-8547-44b3-ac70-ebe491f062b4",
+      "name": "checkGeminiResponse"
+    },
+    {
+      "parameters": {
+        "jsCode": "const parts = $input.first().json.candidates[0].content.parts;\nconst raw = parts.map(p => p.text || '').join('');\n\n// Strip markdown backticks just in case\nconst cleaned = raw\n  .replace(/```json\\n?/gi, '')\n  .replace(/```\\n?/g, '')\n  .trim();\n\n// Extract JSON block\nconst jsonMatch = cleaned.match(/\\{[\\s\\S]*\\}/);\nif (!jsonMatch) {\n  throw new Error(`No JSON object found in Gemini response: ${cleaned.substring(0, 300)}`);\n}\n\nlet parsedOutput;\ntry {\n  parsedOutput = JSON.parse(jsonMatch[0]);\n} catch (e) {\n  throw new Error(`Failed to parse Gemini JSON: ${e.message}`);\n}\n\nconst qualityScore = parsedOutput.quality_score || 0;\nconst qualityReasoning = parsedOutput.quality_reasoning || '';\n\ndelete parsedOutput.quality_score;\ndelete parsedOutput.quality_reasoning;\n\nconst id = $('companyMonitorWebhook').first().json.body.id.trim().replace(/[^0-9a-f-]/gi, '');\n\nreturn [{\n  json: {\n    id: id,\n    mentions_output: parsedOutput,\n    quality_score: qualityScore,\n    quality_reasoning: qualityReasoning\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        144
+      ],
+      "id": "f15c0744-eaa1-4952-9723-9be3b4087990",
+      "name": "parseGemineResponse",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "company_mentions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id.trim().replace(/[^0-9a-f-]/gi, '') }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Completed"
+            },
+            {
+              "fieldId": "mentions_output",
+              "fieldValue": "={{ JSON.stringify($json.mentions_output) }}"
+            },
+            {
+              "fieldId": "quality_score",
+              "fieldValue": "={{ $json.quality_score }}"
+            },
+            {
+              "fieldId": "quality_reasoning",
+              "fieldValue": "={{ $json.quality_reasoning }}"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            },
+            {
+              "fieldId": "error_message",
+              "fieldValue": "=null"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        32
+      ],
+      "id": "5847a41d-82a5-4cec-a1fc-2b57c7692167",
+      "name": "updateSupabaseToCompleted",
+      "credentials": {
+        "supabaseApi": {
+          "id": "Nj83HCks6waS8z9N",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "company_mentions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('companyMonitorWebhook').first().json.body.id.trim().replace(/[^0-9a-f-]/gi, '') }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Failed"
+            },
+            {
+              "fieldId": "error_message",
+              "fieldValue": "={{ $json.error?.message.includes('batching') ? 'Gemini API 429: Resource exhausted (quota/rate limit exceeded)' : $json.error?.message || 'Gemini API call failed' }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        416
+      ],
+      "id": "bd8c1f8b-8237-486a-8488-85a7722ab103",
+      "name": "updateSupabaseToFailed",
+      "credentials": {
+        "supabaseApi": {
+          "id": "Nj83HCks6waS8z9N",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "company_mentions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('companyMonitorWebhook').first().json.body.id.trim().replace(/[^0-9a-f-]/gi, '') }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "Failed"
+            },
+            {
+              "fieldId": "error_message",
+              "fieldValue": "={{ $json.error.message }}"
+            },
+            {
+              "fieldId": "updated_at",
+              "fieldValue": "={{ new Date().toISOString() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        400
+      ],
+      "id": "109bda10-4f67-4cca-9f0b-f12cdafae8ec",
+      "name": "updateSupabaseParseFailed",
+      "credentials": {
+        "supabaseApi": {
+          "id": "Nj83HCks6waS8z9N",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "companyMonitorWebhook": {
+      "main": [
+        [
+          {
+            "node": "callGeminiApi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "callGeminiApi": {
+      "main": [
+        [
+          {
+            "node": "checkGeminiResponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "updateSupabaseToFailed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "checkGeminiResponse": {
+      "main": [
+        [
+          {
+            "node": "parseGemineResponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "updateSupabaseToFailed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parseGemineResponse": {
+      "main": [
+        [
+          {
+            "node": "updateSupabaseToCompleted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "updateSupabaseParseFailed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "54790b3e-c3ef-40c8-94d1-a715cf3f5ac1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5e55d4ec4403f1d3c6ea6cbc21450f63963af8d500092202e250f7f7c3ce2a5d"
+  },
+  "id": "Ow46IVWtT9bzRCFY",
+  "tags": []
+}
